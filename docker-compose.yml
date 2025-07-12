@@ -1,0 +1,23 @@
+services:
+  comment-db:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: comment_app
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres123
+    ports:
+      - "5441:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  backend:
+    build: .
+    ports:
+      - "3000:3000"
+    depends_on:
+      - comment-db
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/comment_app
+
+volumes:
+  pgdata:
