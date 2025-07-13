@@ -1,5 +1,9 @@
 // src/comments/comments.service.ts
-import { Injectable, NotFoundException,ParseUUIDPipe  ,ForbiddenException, Param } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  ForbiddenException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { Comment, User } from '@prisma/client';
 import { CreateCommentDto } from './dto/create-comment.dto';
@@ -12,10 +16,26 @@ type CommentWithReplies = CommentWithAuthor & { replies: CommentWithReplies[] };
 export class CommentService {
   constructor(private prisma: PrismaService) {}
 
-  async create(createCommentDto: CreateCommentDto, userId: string): Promise<CommentWithAuthor> {
+  private transformComment(comment: CommentWithAuthor, userId: string) {
+    const canEdit = comment.authorId === userId && !comment.isDeleted;
+    const canDelete = comment.authorId === userId && !comment.isDeleted;
+    const canRestore =
+      comment.authorId === userId &&
+      comment.isDeleted &&
+      comment.deletedAt &&
+      comment.deletedAt.getTime() > Date.now() - 15 * 60 * 1000;
+
+    return {
+      ...comment,
+      canEdit,
+      canDelete,
+      canRestore,
+    };
+  }
+
+  async create(createCommentDto: CreateCommentDto, userId: string) {
     let parentComment = null;
-    
-    // Handle nested comments
+
     if (createCommentDto.parent_id) {
       parentComment = await this.prisma.comment.findUnique({
         where: { id: createCommentDto.parent_id },
@@ -26,175 +46,147 @@ export class CommentService {
       }
     }
 
-    const commentData: any = {
+    const commentData = {
       content: createCommentDto.content,
       authorId: userId,
       parentId: createCommentDto.parent_id || null,
-      rootId: parentComment ? (parentComment.rootId || parentComment.id) : null,
+      rootId: parentComment ? parentComment.rootId || parentComment.id : null,
       depth: parentComment ? parentComment.depth + 1 : 0,
     };
 
     const savedComment = await this.prisma.comment.create({
       data: commentData,
-      include: {
-        author: true,
-      },
+      include: { author: true },
     });
 
-    // Build materialized path and update if necessary
     let path = savedComment.id;
     if (parentComment) {
-      path = parentComment.path ? `${parentComment.path}.${savedComment.id}` : `${parentComment.id}.${savedComment.id}`;
+      path = parentComment.path
+        ? `${parentComment.path}.${savedComment.id}`
+        : `${parentComment.id}.${savedComment.id}`;
     }
 
-    return this.prisma.comment.update({
+    const updated = await this.prisma.comment.update({
       where: { id: savedComment.id },
       data: { path },
-      include: {
-        author: true,
-      },
+      include: { author: true },
     });
+
+    return this.transformComment(updated, userId);
   }
 
-  async findAll(page: number = 1, limit: number = 20) {
+  async findAll(page = 1, limit = 20, userId?: string) {
     const skip = (page - 1) * limit;
-    
+
     const [comments, total] = await Promise.all([
       this.prisma.comment.findMany({
-        where: { 
-          isDeleted: false, 
-          parentId: null 
+        where: {
+          isDeleted: false,
+          parentId: null,
         },
-        include: { 
+        include: {
           author: true,
           _count: {
-            select: { replies: true }
-          }
+            select: { replies: true },
+          },
         },
         orderBy: { createdAt: 'desc' },
         skip,
         take: limit,
       }),
       this.prisma.comment.count({
-        where: { 
-          isDeleted: false, 
-          parentId: null 
+        where: {
+          isDeleted: false,
+          parentId: null,
         },
       }),
     ]);
 
     return {
-      comments,
+      comments: comments.map((c) => this.transformComment(c, userId)),
       total,
       page,
       totalPages: Math.ceil(total / limit),
     };
   }
 
-  async findCommentTree(rootId: string, page: number = 1, limit: number = 50): Promise<CommentWithReplies[]> {
+  async findCommentTree(rootId: string, page = 1, limit = 50, userId?: string) {
     const skip = (page - 1) * limit;
-    
+
     const comments = await this.prisma.comment.findMany({
-      where: { 
-        OR: [
-          { id: rootId },
-          { rootId: rootId }
-        ],
-        isDeleted: false 
+      where: {
+        OR: [{ id: rootId }, { rootId }],
+        isDeleted: false,
       },
-      include: { 
+      include: {
         author: true,
         _count: {
-          select: { replies: true }
-        }
+          select: { replies: true },
+        },
       },
       orderBy: { path: 'asc' },
       skip,
       take: limit,
     });
 
-    return this.buildCommentTree(comments);
+    const transformed = comments.map((c) => ({
+      ...c,
+      ...this.transformComment(c, userId),
+      replies: [],
+    }));
+    return this.buildCommentTree(transformed);
   }
 
-  private buildCommentTree(comments: CommentWithAuthor[]): CommentWithReplies[] {
-    const commentMap = new Map<string, CommentWithReplies>();
-    const rootComments: CommentWithReplies[] = [];
+  private buildCommentTree(comments: CommentWithReplies[]): CommentWithReplies[] {
+    const map = new Map<string, CommentWithReplies>();
+    const roots: CommentWithReplies[] = [];
 
-    // First pass: create map of all comments with replies array
-    comments.forEach(comment => {
-      commentMap.set(comment.id, { ...comment, replies: [] });
-    });
-
-    // Second pass: build tree structure
-    comments.forEach(comment => {
-      const commentWithReplies = commentMap.get(comment.id)!;
-      
-      if (comment.parentId) {
-        const parent = commentMap.get(comment.parentId);
-        if (parent) {
-          parent.replies.push(commentWithReplies);
-        }
+    comments.forEach((c) => map.set(c.id, { ...c, replies: [] }));
+    comments.forEach((c) => {
+      const entry = map.get(c.id)!;
+      if (c.parentId) {
+        const parent = map.get(c.parentId);
+        if (parent) parent.replies.push(entry);
       } else {
-        rootComments.push(commentWithReplies);
+        roots.push(entry);
       }
     });
 
-    return rootComments;
+    return roots;
   }
 
-  async update(id: string, updateCommentDto: UpdateCommentDto, userId: string): Promise<CommentWithAuthor> {
+  async update(id: string, dto: UpdateCommentDto, userId: string) {
     const comment = await this.prisma.comment.findUnique({
       where: { id },
       include: { author: true },
     });
 
-    if (!comment) {
-      throw new NotFoundException('Comment not found');
-    }
+    if (!comment) throw new NotFoundException('Comment not found');
+    if (comment.authorId !== userId) throw new ForbiddenException('Unauthorized');
+    if (comment.isDeleted) throw new ForbiddenException('Cannot edit deleted comment');
 
-    if (comment.authorId !== userId) {
-      throw new ForbiddenException('You can only edit your own comments');
-    }
-
-    if (comment.isDeleted) {
-      throw new ForbiddenException('Cannot edit deleted comment');
-    }
-
-    // Check 15-minute edit window
     const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000);
-    if (comment.createdAt < fifteenMinutesAgo) {
-      throw new ForbiddenException('Comment can only be edited within 15 minutes of posting');
-    }
+    if (comment.createdAt < fifteenMinutesAgo)
+      throw new ForbiddenException('Edit window expired');
 
-    return this.prisma.comment.update({
+    const updated = await this.prisma.comment.update({
       where: { id },
       data: {
-        content: updateCommentDto.content,
+        content: dto.content,
         isEdited: true,
         updatedAt: new Date(),
       },
-      include: {
-        author: true,
-      },
+      include: { author: true },
     });
+
+    return this.transformComment(updated, userId);
   }
 
-  async remove(id: string, userId: string): Promise<{ message: string }> {
-    const comment = await this.prisma.comment.findUnique({
-      where: { id },
-    });
-
-    if (!comment) {
-      throw new NotFoundException('Comment not found');
-    }
-
-    if (comment.authorId !== userId) {
-      throw new ForbiddenException('You can only delete your own comments');
-    }
-
-    if (comment.isDeleted) {
-      throw new ForbiddenException('Comment is already deleted');
-    }
+  async remove(id: string, userId: string) {
+    const comment = await this.prisma.comment.findUnique({ where: { id } });
+    if (!comment) throw new NotFoundException('Comment not found');
+    if (comment.authorId !== userId) throw new ForbiddenException('Unauthorized');
+    if (comment.isDeleted) throw new ForbiddenException('Already deleted');
 
     await this.prisma.comment.update({
       where: { id },
@@ -204,54 +196,79 @@ export class CommentService {
       },
     });
 
-    return { message: 'Comment deleted successfully. You can restore it within 15 minutes.' };
+    return { message: 'Comment deleted. You can restore it within 15 minutes.' };
   }
 
-  async restore(id: string, userId: string): Promise<CommentWithAuthor> {
-    const comment = await this.prisma.comment.findUnique({
-      where: { id },
-    });
-
-    if (!comment) {
-      throw new NotFoundException('Comment not found');
-    }
-
-    if (comment.authorId !== userId) {
-      throw new ForbiddenException('You can only restore your own comments');
-    }
-
-    if (!comment.isDeleted) {
-      throw new ForbiddenException('Comment is not deleted');
-    }
-
-    // Check 15-minute restore window
-    const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000);
-    if (comment.deletedAt && comment.deletedAt < fifteenMinutesAgo) {
-      throw new ForbiddenException('Comment can only be restored within 15 minutes of deletion');
-    }
-
-    return this.prisma.comment.update({
-      where: { id },
-      data: {
-        isDeleted: false,
-        deletedAt: null,
-      },
-      include: {
-        author: true,
-      },
-    });
-  }
-
-  async findById(id: string): Promise<CommentWithAuthor> {
+  async restore(id: string, userId: string) {
     const comment = await this.prisma.comment.findUnique({
       where: { id },
       include: { author: true },
     });
 
-    if (!comment) {
-      throw new NotFoundException('Comment not found');
+    if (!comment) throw new NotFoundException('Comment not found');
+    if (comment.authorId !== userId) throw new ForbiddenException('Unauthorized');
+    if (!comment.isDeleted) throw new ForbiddenException('Not deleted');
+
+    const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000);
+    if (comment.deletedAt && comment.deletedAt < fifteenMinutesAgo) {
+      throw new ForbiddenException('Restore window expired');
     }
 
-    return comment;
+    const restored = await this.prisma.comment.update({
+      where: { id },
+      data: {
+        isDeleted: false,
+        deletedAt: null,
+      },
+      include: { author: true },
+    });
+
+    return this.transformComment(restored, userId);
+  }
+
+  async findUserComments(userId: string, page = 1, limit = 20) {
+    const skip = (page - 1) * limit;
+
+    const [comments, total] = await Promise.all([
+      this.prisma.comment.findMany({
+        where: {
+          authorId: userId,
+          isDeleted: false,
+          parentId: null,
+        },
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: limit,
+        include: {
+          author: true,
+          _count: { select: { replies: true } },
+        },
+      }),
+      this.prisma.comment.count({
+        where: {
+          authorId: userId,
+          isDeleted: false,
+          parentId: null,
+        },
+      }),
+    ]);
+
+    return {
+      comments: comments.map((c) => this.transformComment(c, userId)),
+      total,
+      page,
+      limit,
+      hasMore: page * limit < total,
+    };
+  }
+
+  async findById(id: string, userId?: string) {
+    const comment = await this.prisma.comment.findUnique({
+      where: { id },
+      include: { author: true },
+    });
+
+    if (!comment) throw new NotFoundException('Comment not found');
+    return this.transformComment(comment, userId);
   }
 }

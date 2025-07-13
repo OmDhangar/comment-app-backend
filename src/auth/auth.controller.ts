@@ -4,6 +4,7 @@ import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
+import { access } from 'fs';
 
 @Controller('auth')
 export class AuthController {
@@ -22,6 +23,7 @@ export class AuthController {
     // Return user data (without token for security)
     return {
       user: result.user,
+      token:result.access_token,
       message: 'Registration successful',
     };
   }
@@ -39,6 +41,7 @@ export class AuthController {
     // Return user data (without token for security)
     return {
       user: result.user,
+      token:result.access_token,
       message: 'Login successful',
     };
   }

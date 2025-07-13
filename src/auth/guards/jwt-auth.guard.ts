@@ -10,7 +10,7 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
     }
     handleRequest<TUser = any>(err: any, user: any, info: any, context: ExecutionContext, status?: any): TUser {
         if(err || !user){
-            throw new UnauthorizedException();
+            throw new UnauthorizedException("jwt not verified you are not user");
         }
         return user;
     }

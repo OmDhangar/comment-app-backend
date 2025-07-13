@@ -1,9 +1,29 @@
-// src/comments/comments.controller.ts
-import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards, Request, Query, ParseUUIDPipe } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Patch,
+  Param,
+  Delete,
+  UseGuards,
+  Request,
+  Query,
+  Put
+} from '@nestjs/common';
 import { CommentService } from './comment.service';
 import { CreateCommentDto } from './dto/create-comment.dto';
 import { UpdateCommentDto } from './dto/update-comment.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+
+interface RequestWithUser extends Request {
+  user: {
+    id: string;
+    email?: string;
+    // add other fields from JWT payload if needed
+  };
+}
+
 
 @Controller('comments')
 @UseGuards(JwtAuthGuard)
@@ -22,22 +42,38 @@ export class CommentsController {
   ) {
     return this.commentsService.findAll(parseInt(page), parseInt(limit));
   }
+  @Get('/user')
+    getUserComments(
+      @Query('page') page: string = '1',
+      @Query('limit') limit: string = '20',
+      @Request() req
+    ) {
+      return this.commentsService.findUserComments(req.user.id, parseInt(page), parseInt(limit));
+    }
 
   @Get(':id')
-  findOne(@Param('id', ParseUUIDPipe) id: string) {
+  findOne(@Param('id') id: string) {
     return this.commentsService.findById(id);
   }
 
+  @UseGuards(JwtAuthGuard)
   @Get(':rootId/tree')
   findCommentTree(
-    @Param('rootId', ParseUUIDPipe) rootId: string,
+    @Param('rootId') rootId: string,
     @Query('page') page: string = '1',
-    @Query('limit') limit: string = '50'
+    @Query('limit') limit: string = '50',
+    @Request() req: RequestWithUser
   ) {
-    return this.commentsService.findCommentTree(rootId, parseInt(page), parseInt(limit));
+    const userId = (req.user as any)?.id; // or req.user['sub'] depending on how you define payload
+    return this.commentsService.findCommentTree(rootId, parseInt(page), parseInt(limit), userId);
   }
+    @Get('thread/:id')
+    async getThread(@Param('id') id: string, @Request() req) {
+      const userId = req.user?.id; // if using JWT
+      return this.commentsService.findCommentTree(id, 1, 50, userId);
+    }
 
-  @Patch(':id')
+  @Put(':id')
   update(
     @Param('id') id: string,
     @Body() updateCommentDto: UpdateCommentDto,
@@ -47,12 +83,12 @@ export class CommentsController {
   }
 
   @Delete(':id')
-  remove(@Param('id', ParseUUIDPipe) id: string, @Request() req) {
+  remove(@Param('id') id: string, @Request() req) {
     return this.commentsService.remove(id, req.user.id);
   }
 
   @Post(':id/restore')
-  restore(@Param('id', ParseUUIDPipe) id: string, @Request() req) {
+  restore(@Param('id') id: string, @Request() req) {
     return this.commentsService.restore(id, req.user.id);
   }
 }
