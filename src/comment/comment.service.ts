@@ -1,4 +1,3 @@
-// src/comments/comments.service.ts
 import {
   Injectable,
   NotFoundException,
@@ -34,7 +33,7 @@ export class CommentService {
   }
 
   async create(createCommentDto: CreateCommentDto, userId: string) {
-    let parentComment = null;
+    let parentComment: Comment | null = null;
 
     if (createCommentDto.parent_id) {
       parentComment = await this.prisma.comment.findUnique({
@@ -59,12 +58,11 @@ export class CommentService {
       include: { author: true },
     });
 
-    let path = savedComment.id;
-    if (parentComment) {
-      path = parentComment.path
-        ? `${parentComment.path}.${savedComment.id}`
-        : `${parentComment.id}.${savedComment.id}`;
-    }
+    const path = parentComment?.path
+      ? `${parentComment.path}.${savedComment.id}`
+      : parentComment
+      ? `${parentComment.id}.${savedComment.id}`
+      : savedComment.id;
 
     const updated = await this.prisma.comment.update({
       where: { id: savedComment.id },
@@ -81,23 +79,48 @@ export class CommentService {
     const [comments, total] = await Promise.all([
       this.prisma.comment.findMany({
         where: {
-          isDeleted: false,
           parentId: null,
+          OR: [
+            { isDeleted: false },
+            {
+              isDeleted: true,
+              authorId: userId,
+              deletedAt: {
+                gte: new Date(Date.now() - 15 * 60 * 1000),
+              },
+            },
+          ],
         },
         include: {
           author: true,
           _count: {
-            select: { replies: true },
+            select: {
+              replies: {
+                where: {
+                  isDeleted: false,
+                },
+              },
+            },
           },
         },
         orderBy: { createdAt: 'desc' },
         skip,
         take: limit,
       }),
+
       this.prisma.comment.count({
         where: {
-          isDeleted: false,
           parentId: null,
+          OR: [
+            { isDeleted: false },
+            {
+              isDeleted: true,
+              authorId: userId,
+              deletedAt: {
+                gte: new Date(Date.now() - 15 * 60 * 1000),
+              },
+            },
+          ],
         },
       }),
     ]);
@@ -114,14 +137,38 @@ export class CommentService {
     const skip = (page - 1) * limit;
 
     const comments = await this.prisma.comment.findMany({
-      where: {
-        OR: [{ id: rootId }, { rootId }],
-        isDeleted: false,
+     where: {
+        AND: [
+          {
+            OR: [
+              { id: rootId },
+              { rootId },
+            ],
+          },
+          {
+            OR: [
+              { isDeleted: false },
+              {
+                isDeleted: true,
+                authorId: userId,
+                deletedAt: {
+                  gte: new Date(Date.now() - 15 * 60 * 1000),
+                },
+              },
+            ],
+          },
+        ],
       },
       include: {
         author: true,
         _count: {
-          select: { replies: true },
+          select: {
+            replies: {
+              where: {
+                isDeleted: false,
+              },
+            },
+          },
         },
       },
       orderBy: { path: 'asc' },
@@ -134,6 +181,7 @@ export class CommentService {
       ...this.transformComment(c, userId),
       replies: [],
     }));
+
     return this.buildCommentTree(transformed);
   }
 
@@ -166,8 +214,9 @@ export class CommentService {
     if (comment.isDeleted) throw new ForbiddenException('Cannot edit deleted comment');
 
     const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000);
-    if (comment.createdAt < fifteenMinutesAgo)
+    if (comment.createdAt < fifteenMinutesAgo) {
       throw new ForbiddenException('Edit window expired');
+    }
 
     const updated = await this.prisma.comment.update({
       where: { id },
@@ -233,22 +282,46 @@ export class CommentService {
       this.prisma.comment.findMany({
         where: {
           authorId: userId,
-          isDeleted: false,
           parentId: null,
+          OR: [
+            { isDeleted: false },
+            {
+              isDeleted: true,
+              deletedAt: {
+                gte: new Date(Date.now() - 15 * 60 * 1000),
+              },
+            },
+          ],
         },
         orderBy: { createdAt: 'desc' },
         skip,
         take: limit,
         include: {
           author: true,
-          _count: { select: { replies: true } },
+          _count: {
+            select: {
+              replies: {
+                where: {
+                  isDeleted: false,
+                },
+              },
+            },
+          },
         },
       }),
       this.prisma.comment.count({
         where: {
           authorId: userId,
-          isDeleted: false,
           parentId: null,
+          OR: [
+            { isDeleted: false },
+            {
+              isDeleted: true,
+              deletedAt: {
+                gte: new Date(Date.now() - 15 * 60 * 1000),
+              },
+            },
+          ],
         },
       }),
     ]);

@@ -4,6 +4,14 @@ import { ValidationPipe } from '@nestjs/common';
 import { AppModule } from './app.module';
 import * as cookieParser from 'cookie-parser';
 
+import * as crypto from 'crypto';
+if (!globalThis.crypto) {
+  (globalThis as any).crypto = {
+    randomUUID: crypto.randomUUID,
+  };
+}
+
+
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 

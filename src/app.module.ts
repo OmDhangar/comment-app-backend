@@ -8,6 +8,8 @@ import { PrismaModule } from './prisma/prisma.module';
 import { AuthModule } from './auth/auth.module';
 import { UserModule } from './user/user.module';
 import { CommentModule } from './comment/comment.module';
+import { ScheduleModule } from '@nestjs/schedule';
+import {CommentCleanupService} from './comment/cleanup/commentCleanup.service'
 
 @Module({
   imports: [
@@ -19,12 +21,15 @@ import { CommentModule } from './comment/comment.module';
     AuthModule,
     UserModule,
     CommentModule,
+    ScheduleModule.forRoot()
   ],
   providers: [
     {
       provide: APP_PIPE,
       useClass: ValidationPipe,
+      
     },
+    CommentCleanupService
   ],
 })
 export class AppModule {}
