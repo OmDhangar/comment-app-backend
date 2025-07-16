@@ -21,7 +21,6 @@ import {CommentCleanupService} from './comment/cleanup/commentCleanup.service'
     AuthModule,
     UserModule,
     CommentModule,
-    ScheduleModule.forRoot()
   ],
   providers: [
     {

@@ -13,7 +13,9 @@ type CommentWithReplies = CommentWithAuthor & { replies: CommentWithReplies[] };
 
 @Injectable()
 export class CommentService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+  ) {}
 
   private transformComment(comment: CommentWithAuthor, userId: string) {
     const canEdit = comment.authorId === userId && !comment.isDeleted;
@@ -57,7 +59,6 @@ export class CommentService {
       data: commentData,
       include: { author: true },
     });
-
     const path = parentComment?.path
       ? `${parentComment.path}.${savedComment.id}`
       : parentComment

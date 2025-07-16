@@ -20,7 +20,6 @@ interface RequestWithUser extends Request {
   user: {
     id: string;
     email?: string;
-    // add other fields from JWT payload if needed
   };
 }
 
