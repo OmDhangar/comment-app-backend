@@ -7,6 +7,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { Comment, User } from '@prisma/client';
 import { CreateCommentDto } from './dto/create-comment.dto';
 import { UpdateCommentDto } from './dto/update-comment.dto';
+import { NotificationService } from 'src/notification/notification.service';
 
 type CommentWithAuthor = Comment & { author: User };
 type CommentWithReplies = CommentWithAuthor & { replies: CommentWithReplies[] };
@@ -15,6 +16,7 @@ type CommentWithReplies = CommentWithAuthor & { replies: CommentWithReplies[] };
 export class CommentService {
   constructor(
     private prisma: PrismaService,
+    private notificationService: NotificationService
   ) {}
 
   private transformComment(comment: CommentWithAuthor, userId: string) {
@@ -71,7 +73,31 @@ export class CommentService {
       include: { author: true },
     });
 
-    return this.transformComment(updated, userId);
+    if( parentComment && parentComment.authorId !== userId){
+      await this.notificationService.createNotification({
+        userId:parentComment.authorId,
+        senderId:userId,
+        type:'reply',
+        commentId:parentComment.id,
+      })
+    }
+    if (!parentComment && commentData.rootId) {
+      // Find the original comment in the thread (root comment)
+      const rootThread = await this.prisma.comment.findFirst({
+        where: {
+          id: commentData.rootId,
+        },
+      });
+
+      if (rootThread && rootThread.authorId !== userId) {
+        await this.notificationService.createNotification({
+          userId: rootThread.authorId,
+          senderId: userId,
+          type: 'comment',
+          commentId: updated.id,
+        });
+      }
+    }
   }
 
   async findAll(page = 1, limit = 20, userId?: string) {

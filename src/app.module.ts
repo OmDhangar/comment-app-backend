@@ -10,6 +10,7 @@ import { UserModule } from './user/user.module';
 import { CommentModule } from './comment/comment.module';
 import { ScheduleModule } from '@nestjs/schedule';
 import {CommentCleanupService} from './comment/cleanup/commentCleanup.service'
+import { NotificationModule } from './notification/notification.module';
 
 @Module({
   imports: [
@@ -21,6 +22,7 @@ import {CommentCleanupService} from './comment/cleanup/commentCleanup.service'
     AuthModule,
     UserModule,
     CommentModule,
+    NotificationModule,
   ],
   providers: [
     {
